@@ -1,0 +1,12 @@
+[package]
+name = "loxy"
+version = "0.1.0"
+authors = ["Geoffrey Mureithi <mureithinjuguna@gmail.com>"]
+edition = "2018"
+
+license = "MIT/Apache-2.0"
+
+[dependencies]
+simple-server = "0.4.0"
+env_logger = "0.6.0"
+log = "0.4.6"
