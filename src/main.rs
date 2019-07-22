@@ -4,12 +4,26 @@ extern crate env_logger;
 extern crate log;
 
 extern crate simple_server;
+extern crate tokio;
+extern crate futures;
 
-use simple_server::{Method, Server, StatusCode, ResponseBuilder, Response};
-use std::cell::RefCell;
+
+use simple_server::{Method, Server, StatusCode};
+use crossbeam_utils::thread;
 
 
-#[derive(Clone)]
+
+fn find_route<'a>(routes : &'a Vec<Route>, method: &Method, path : &str) -> Result<&'a Route, &'a str> {
+    for (i, route) in routes.iter().enumerate() {
+        if route.method.eq(&method) && route.path.eq(&path) {
+            return Ok(route);
+        }
+    }
+    Err("Failed")
+}
+
+
+#[derive(Debug, Clone)]
 pub struct Route {
     method: Method,
     path: String,
@@ -26,54 +40,48 @@ impl Route {
     }
 }
 
-#[derive(Clone)]
-pub struct App<'a>{
+pub struct App{
     routes: Vec<Route>,
-    server: &'a Server
+    server: Option<Server>
 }
 
-impl <'a> App<'a> {
-    pub fn new() -> App<'a>{
+impl App {
+    pub fn new() -> App{
         App {
             routes: Vec::new(),
-            server: &Server::new(|request, mut response| {
-                response.status(StatusCode::IM_A_TEAPOT);
-                Ok(response.body("<h1>404</h1><p>Not found!<p>".as_bytes().to_vec())?)
-            })
+            server: None
         }
     }
 
-    fn find_route(&mut self, method: &Method, path : &str) -> Result<Route, &str> {
-        for (i, route) in self.routes.into_iter().enumerate() {
-            if route.method.eq(&method) && route.path.eq(&path) {
-                return Ok(route);
-            }
-        }
-        Err("Failed")
-    }
 
     pub fn get(&mut self, path: &str, response: String){
         let route: Route = Route::new(path, response);
         self.routes.push(route);
     }
 
-    pub fn start<'b>(&mut self){
+    pub fn start(&mut self){
         let host = "127.0.0.1";
         let port = "7878";
-        self.server =  &Server::new(|request, mut response| {
+        let routes = self.routes.clone();
+        let server = Server::new( move |request, mut response| {
             info!("Request received. {} {}", request.method(), request.uri());
-            info!("Request received. {} ", (self.find_route(request.method(), request.uri().path())).is_ok());
-            match (request.method(), request.uri().path()) {
-                (&Method::GET, "/hello") => {
-                    Ok(response.body("<h1>Hi!</h1><p>Hello Rust!</p>".as_bytes().to_vec())?)
-                }
-                (_, _) => {
-                    response.status(StatusCode::NOT_FOUND);
-                    Ok(response.body("<h1>404</h1><p>Not found!<p>".as_bytes().to_vec())?)
-                }
-            }
+                thread::scope(|s| {
+                s.spawn(move |_|{
+                    match find_route(&routes, request.method(), request.uri().path()) {
+                        Ok(h) => {
+                            Ok(response.body(h.handler.as_bytes().to_vec())?)
+                        }
+                        Err(e) => {
+                            response.status(StatusCode::NOT_FOUND);
+                            Ok(response.body(format!("<h1>404</h1><p>{}<p>", e).as_bytes().to_vec())?)
+                        }
+                    }
+                }).join()
+            }).unwrap()
+
         });
-        self.server.listen(host, port);
+        self.server = Some(server);
+        self.server.as_ref().unwrap().listen(host, port);
     }
 }
 
